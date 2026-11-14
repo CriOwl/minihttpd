@@ -7,7 +7,6 @@ correspondiente a la vez que arma los encabezados*/
 #define _POSIX_C_SOURCE 200809L
 #include "include/http.h"
 #include "include/files.h"
-#include "include/server.h"
 #include "include/mime.h"
 #include <errno.h>
 #include <unistd.h>
@@ -16,12 +15,6 @@ correspondiente a la vez que arma los encabezados*/
 #include <time.h>
 #include <strings.h>
 #include <stdio.h>
-#define BUFFER_READ         40960
-#define MAX_HEADER             30
-#define MAX_BUFFER_HEADER   4096
-#define MAX_BUFFER_VALUE    4096
-#define MAX_METHOD            15
-#define MAX_PATH             120
 #define HTTP_PARSE_OK             1
 #define HTTP_PARSE_MORE           0
 #define HTTP_PARSE_BAD_REQUEST   -24
@@ -33,55 +26,15 @@ correspondiente a la vez que arma los encabezados*/
 
 
 
-struct http_header_ {
-    char header[MAX_BUFFER_HEADER];
-    size_t idx_header;
-    char value[MAX_BUFFER_VALUE];
-    size_t idx_value;
-};
 
-struct first_line {
-    char method[MAX_METHOD];
-    size_t idx_method;
-    char path[MAX_PATH];
-    size_t idx_path;
-};
 
-struct http_msg_ {
-    char buffer_read[BUFFER_READ];
-    size_t idx_begin;
-    int idx_end;
-    size_t len_read;
-    struct first_line f_line;
-    struct http_header_ headers_t[MAX_HEADER];
-    size_t idx_header;
-    int close_after_response;
-    struct file_metadata send_file;
-};
 
-struct client{
-    int fd_clt;
-    struct http_msg_ http_msg;
-};
 
-char get_char(struct http_msg_ *msg, size_t offset);
-int is_char_avaible_header(char value);
-int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, int end);
-int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len);
-void skip_http_request(struct http_msg_ *http_msg, size_t len);
-int parse_first_line( struct http_msg_ *msg_http, size_t line_end);
-int is_connection_close(char *value);
-int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len);
-void http_init(struct http_msg_ *http_msg);
-int http_write(struct http_msg_ *http_msg, char *data, size_t len_data);
-int http_parse_next(struct http_msg_ *http_msg);
-int read_send_http(struct http_msg_ *http_msg);
-int response(struct client *clt, int fd);
 
-char get_char(struct http_msg_ *msg, size_t offset){
+static char get_char(struct http_msg_ *msg, size_t offset){
     return msg->buffer_read[(msg->idx_begin + offset) % BUFFER_READ];
 }
-int is_char_avaible_header(char value){
+static int is_char_avaible_header(char value){
          //  A-Z                            ^ - z                           0-9          
     if ((value >= 65 && value <= 90) || (value >= 94 && value <= 122) || (value >= 48 && value <= 57)) {
         return 1;
@@ -93,7 +46,7 @@ int is_char_avaible_header(char value){
     return 0;
 }
 
-int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, int end){
+static int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, int end){
     if (end < start || end - start >= size_dst) {
         return HTTP_PARSE_TOO_LARGE;
     }
@@ -105,7 +58,7 @@ int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, 
     return HTTP_PARSE_OK;
 }
 
-int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
+static int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
     for (size_t i = 0; i + 3 < msg_http->len_read; i++) {
         if (get_char(msg_http, i) == '\r' && get_char(msg_http, i + 1) == '\n' && get_char(msg_http, i + 2) == '\r' && get_char(msg_http, i + 3) == '\n') {
             *header_len = i + 4;
@@ -115,7 +68,7 @@ int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
     return HTTP_PARSE_MORE;
 }
 
-int find_fin_header(struct http_msg_ *msg_http, int start, size_t limit, size_t *idx_fin_header){
+static int find_fin_header(struct http_msg_ *msg_http, int start, size_t limit, size_t *idx_fin_header){
     for (size_t i = start; i < limit; i++) {
         char value = get_char(msg_http, i);
         if (value == '\r') {
@@ -132,7 +85,7 @@ int find_fin_header(struct http_msg_ *msg_http, int start, size_t limit, size_t 
     return HTTP_PARSE_BAD_REQUEST;
 }
 
-void skip_http_request(struct http_msg_ *http_msg, size_t len){
+static void skip_http_request(struct http_msg_ *http_msg, size_t len){
     if (len == 0 || len > http_msg->len_read) {
         return;
     }
@@ -143,7 +96,7 @@ void skip_http_request(struct http_msg_ *http_msg, size_t len){
 }
 
 
-int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
+static int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
     size_t i = 0;
     // Un comando de http al inicio no tiene " " solo al final 
     while (i < line_end && get_char(msg_http, i) != ' ') {
@@ -198,40 +151,26 @@ int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
         i++;
     }
     //HTTP/
-    if(i+5 >line_end || !(get_char(msg_http, i) == 'H' && get_char(msg_http, i+1) == 'T' && get_char(msg_http, i+2) == 'T' && get_char(msg_http, i+3) == 'P'
-        && get_char(msg_http, i+4) == '/')){
+    if(i+8 >line_end || !(get_char(msg_http, i) == 'H' && get_char(msg_http, i+1) == 'T' && get_char(msg_http, i+2) == 'T' && get_char(msg_http, i+3) == 'P'
+        && get_char(msg_http, i+4) == '/' &&  get_char(msg_http, i+5) == '1' && get_char(msg_http, i+6) == '.' && get_char(msg_http, i+7) == '1')){
         return HTTP_PARSE_VERSION;
     }
-    i=i+5;
-    while (i < line_end && (get_char(msg_http, i) >=48 && get_char(msg_http, i) <=57)) {
+    i=i+8;
+    while (i < line_end && get_char(msg_http, i) == ' ') {
         i++;
     }
-    if(!(get_char(msg_http, i)=='.')){
-        return HTTP_PARSE_VERSION;
+    if(get_char(msg_http, i)=='\r'){
+        return HTTP_PARSE_OK;
     }
-    i++;
-
-    while (i < line_end) {
-        if((get_char(msg_http, i) >=48 && get_char(msg_http, i) <=57)){
-            i++;
-        }else{
-            while (i < line_end && get_char(msg_http, i) == ' ') {
-                i++;
-            }
-            if(get_char(msg_http, i)=='\r'){
-                return HTTP_PARSE_OK;
-            }
-            return HTTP_PARSE_VERSION;
-        }
-    }
-    return HTTP_PARSE_OK;
+    return HTTP_PARSE_VERSION;
 }
-int is_connection_close(char *value){
+
+static int is_connection_close(char *value){
     return strstr(value,"close") || strstr(value,"CLOSE");
 }
 
 
-int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len){
+static int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len){
     // todo request http necesita el encabezado Host
     int host_found = 0;
     while (idx < header_len) {
@@ -332,7 +271,7 @@ int http_write(struct http_msg_ *http_msg, char *data, size_t len_data){
 }
 
 
-int http_parse_next(struct http_msg_ *http_msg){
+static int http_parse_next(struct http_msg_ *http_msg){
     size_t header_len = 0;
     int result = find_request_header_len_(http_msg,&header_len);
     if (result != HTTP_PARSE_OK) {
@@ -354,7 +293,7 @@ int http_parse_next(struct http_msg_ *http_msg){
     return result;
 }
 
-int get_date_server(char *buffer, int len){
+static int get_date_server(char *buffer, int len){
     time_t date=time(NULL);
     struct tm date_time={0};
     if(date==(time_t)-1){
@@ -370,19 +309,31 @@ int get_date_server(char *buffer, int len){
     return 0;    
 }
 
-int response(struct client *clt, int fd){
+static int get_code_http(struct client *clt){
+    int code_http=0;
     int status=0;
-    int code_http=200;
-    int idx=0;
-    char buffer[1024];
     if((status=http_parse_next(&clt->http_msg))==0){
         return 0;
+    }else if(status==-25){
+        code_http=405;
     }else if(status<0){
         code_http=400;
     }else{
         status=open_fd_get_len(&clt->http_msg.send_file,clt->http_msg.f_line.path,clt->http_msg.f_line.idx_path);
-        if(status<0){
-            code_http=-1*status; 
+        code_http=(status<0)?-1*status:status;
+    }
+    return code_http;
+}
+
+int response(struct client *clt, int fd, int code_http){
+    int status=0;
+    int idx=0;
+    char buffer[1024];
+    if(code_http!=400){
+        code_http=get_code_http(clt);
+        printf("%dasdadasd",code_http);
+        if(code_http==0){
+            return 0;
         }
     }
     int n=0;
@@ -496,7 +447,6 @@ int response(struct client *clt, int fd){
         perror("No se puede enviar el encabezado");
         return -1;
     }
-    fprintf(stderr,"[DEBUG] response: encabezados enviados fd=%d bytes=%d codigo=%d:\n%.*s\n",fd,n,code_http,n,buffer);
     return code_http;
 }
 

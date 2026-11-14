@@ -23,20 +23,20 @@ Socket Cliente con keep alive
 #include <netinet/tcp.h>
 #include <fcntl.h>
 #include <stdlib.h>
-const int Q_len=10;
-char IP_SERVER[]="0.0.0.0";
-char SERVICE_OR_PORT[]="9025";
-int fd_epoll=-1;
+static const int Q_len=10;
+static char IP_SERVER[]="0.0.0.0";
+static char SERVICE_OR_PORT[]="9000";
+static int fd_epoll=-1;
 
 
 
-int passive_socket(char * ip_server, char * service_or_port, int q_len);
-void get_addr_clt(struct sockaddr_in *clt_addr,char* ip_port);
-void cfg_sock_clt(int fd_clt);
-void cfg_sock_srv(int fd_srv);
-void set_sock_opt(int fd,int level, int opt, int value, char* msg_e, int len_msg);
+static int passive_socket(char * ip_server, char * service_or_port, int q_len);
+static void get_addr_clt(struct sockaddr_in *clt_addr,char* ip_port);
+static void cfg_sock_clt(int fd_clt);
+static void cfg_sock_srv(int fd_srv);
+static void set_sock_opt(int fd,int level, int opt, int value, char* msg_e, int len_msg);
 
-int passive_socket(char * ip_server, char * service_or_port, int q_len){
+static int passive_socket(char * ip_server, char * service_or_port, int q_len){
     // Resolucion de la direccion IP y del servicio por medio de getaddrinfo()
     int fd_sock_server=-100;
     struct addrinfo *pointer=NULL, *resolution=NULL, hints={0};
@@ -84,13 +84,13 @@ int passive_socket(char * ip_server, char * service_or_port, int q_len){
     return fd_sock_server;
 }
 
-void get_addr_clt(struct sockaddr_in *clt_addr,char* ip_port){
+static void get_addr_clt(struct sockaddr_in *clt_addr,char* ip_port){
     if(inet_ntop(AF_INET,&clt_addr->sin_addr,ip_port,INET_ADDRSTRLEN)==NULL){
         perror("Error en clt ntop : "); 
     }
 }
 
-void cfg_sock_clt(int fd_clt){
+static void cfg_sock_clt(int fd_clt){
     set_sock_opt(fd_clt,SOL_SOCKET,SO_KEEPALIVE,1,"SO_KEEPALIVE",sizeof("SO_KEEPALIVE"));
     set_sock_opt(fd_clt,IPPROTO_TCP,TCP_KEEPIDLE,20,"TCP_KEEPIDLE",sizeof("TCP_KEEPIDLE")); // Tiempo de inactividad  antes de enviar una peticion de keepalive
     set_sock_opt(fd_clt,IPPROTO_TCP,TCP_KEEPINTVL,5,"TCP_KEEPINTVL",sizeof("TCP_KEEPINTVL")); // Cada x tiempo se envia los keepalive 
@@ -106,12 +106,12 @@ void cfg_sock_clt(int fd_clt){
     }
 }
 
-void cfg_sock_srv(int fd_srv){
+static void cfg_sock_srv(int fd_srv){
     //set_sock_opt(fd_srv,SOL_SOCKET,SO_REUSEADDR,1,"SO_REUSEADDR",sizeof("SO_REUSEADDR"));
 
 }
 
-void set_sock_opt(int fd,int level, int opt, int value, char* msg_e, int len_msg){
+static void set_sock_opt(int fd,int level, int opt, int value, char* msg_e, int len_msg){
     int error_opt= setsockopt(fd,level,opt,&value,sizeof(value));
     if(error_opt!=0){
         char msg_err[len_msg+7];
@@ -123,7 +123,7 @@ void set_sock_opt(int fd,int level, int opt, int value, char* msg_e, int len_msg
 
 //////////////////////////////////////////////////////
 /* Logica del servidor*/
-int event_epoll_srv(int fd_epoll, int fd_sock_passive){
+static int event_epoll_srv(int fd_epoll, int fd_sock_passive){
     struct client *ptr = malloc(sizeof(struct client));
     if (ptr == NULL) {
         perror("malloc");
@@ -141,7 +141,7 @@ int event_epoll_srv(int fd_epoll, int fd_sock_passive){
     return 0;
 }
 
-int event_epoll_clt_init(int fd_epoll, int fd_clt){
+static int event_epoll_clt_init(int fd_epoll, int fd_clt){
     struct client *ptr = malloc(sizeof(struct client));
     if (ptr == NULL) {
         perror("malloc");
@@ -161,39 +161,78 @@ int event_epoll_clt_init(int fd_epoll, int fd_clt){
     return 1;
 }
 
-int event_epoll_clt_write(int fd_epoll, int fd_clt){
-    
+static int event_epoll_clt_write(int fd_epoll, struct epoll_event event){
+    event.events=EPOLLOUT|EPOLLHUP| EPOLLERR | EPOLLRDHUP;
+    struct client *clt=event.data.ptr;
+    int error=epoll_ctl(fd_epoll,EPOLL_CTL_MOD,clt->fd_clt,&event);
+    if(error<0){
+        perror("No se cambiar la configuracion del socket escritura para epoll:");
+        return -1;
+    }
 }
-int event_epoll_clt_read(int fd_epoll, int fd_clt){
-    
+static int event_epoll_clt_read(int fd_epoll, struct epoll_event event){
+    event.events=EPOLLIN|EPOLLHUP| EPOLLERR | EPOLLRDHUP;
+    struct client *clt=event.data.ptr;
+    int error=epoll_ctl(fd_epoll,EPOLL_CTL_MOD,clt->fd_clt,&event);
+    if(error<0){
+        perror("No se cambiar la configuracion del socket lectura para epoll:");
+        return -1;
+    }
 }
 
-void remove_clt(struct epoll_event  event){
+static void remove_clt(struct epoll_event  event){
     struct client *clt=event.data.ptr;
+    if(clt->http_msg.send_file.fd_file>0){
+        close(clt->http_msg.send_file.fd_file);
+    }
     int fd=clt->fd_clt;
     free(event.data.ptr);
     close(fd);
 }
 
-int accept_event(struct epoll_event event,int fd_epoll){
+static int accept_event(struct epoll_event event,int fd_epoll){
     struct sockaddr_in clt_addr={0};
     struct client *clt=event.data.ptr;
-    socklen_t len_sock;
+    socklen_t len_sock=16;
     int fd_clt=accept(clt->fd_clt,(struct sockaddr*)&clt_addr,&len_sock);
     if(fd_clt<0){
         fprintf(stderr,"Se fallo al aceptar el cliente: accept() en fd_escucha=%d devolvio=%d errno=%d (%s)\n",clt->fd_clt,fd_clt,errno,strerror(errno));
         return -1;
     }
-    fprintf(stderr,"[DEBUG] accept_event: conexion aceptada fd=%d\n",fd_clt);
     cfg_sock_clt(fd_clt);
     if(event_epoll_clt_init(fd_epoll,fd_clt)<0){
         return -1;
     }
     return 0;
 }
+static int response_request_socket(struct epoll_event event){
+    struct client *clt=event.data.ptr;
+    while (1){
+        int code_error=response(clt,clt->fd_clt,0);
+        if(code_error==200){
+            int error=send_body_http(clt->fd_clt,&clt->http_msg.send_file);
+                if(error<0){
+                    remove_clt(event);
+                    return -1;
+                }else if(error==0){
+                    event_epoll_clt_write(fd_epoll,event);
+                }
+            break; 
+        }else if(code_error ==-1){
+            remove_clt(event);
+            return -1;
+        }else if(code_error==0){
+            break;
+        }
+    }
+    if(clt->http_msg.close_after_response){
+        remove_clt(event);
+        return -1;
+    }
+}
 
 
-int write_event(struct epoll_event event){
+static int write_event(struct epoll_event event){
     struct client *clt=event.data.ptr;
     if(clt->http_msg.send_file.offset < clt->http_msg.send_file.len_file){
         int error=send_body_http(clt->fd_clt,&clt->http_msg.send_file);
@@ -202,23 +241,16 @@ int write_event(struct epoll_event event){
             return -1;
         }
     }
-    while (1){
-        int code_error=response(clt,clt->fd_clt);
-        if(code_error==200){
-            int error=send_body_http(clt->fd_clt,&clt->http_msg.send_file);
-                if(error<0){
-                    remove_clt(event);
-                }    
-        }else if(code_error ==-1){
-            remove_clt(event);
-            return -1;
-        }else if(code_error==0){
-            return 0;
-        }
+    int error=response_request_socket(event);
+    if(error<0){
+        return -1;
     }
+    event_epoll_clt_read(fd_epoll,event);
+    return error;
 }
 
-int read_event(struct epoll_event event){
+
+static int read_event(struct epoll_event event){
     char buffer[4096];
     struct client *clt=event.data.ptr;
     while (1){
@@ -236,39 +268,21 @@ int read_event(struct epoll_event event){
         break;
        }
        if(http_write(&clt->http_msg,buffer,n)<0){
-        remove_clt(event);
+        response(clt,clt->fd_clt,400);
         return -1;
        }
-       
     }
-    while (1){
-        int code_error=response(clt,clt->fd_clt);
-        if(code_error==200){
-            int error=send_body_http(clt->fd_clt,&clt->http_msg.send_file);
-                if(error<0){
-                    remove_clt(event);
-                    return -1;
-                }    
-        }else if(code_error ==-1){
-            remove_clt(event);
-            return -1;
-        }else if(code_error==0){
-            return 0;
-        }
-    }
-    
+    int error=response_request_socket(event);
+    return error;
 }
-void error_event(){
 
-}
-// error volver a armar el event con write
-
-void check_event(struct epoll_event event, int fd_passive){
+static void check_event(struct epoll_event event, int fd_passive){
     struct client *clt=event.data.ptr;
     if(event.events & EPOLLOUT){
         write_event(event);
     }else if (event.events & EPOLLHUP | event.events & EPOLLRDHUP){
-        error_event();
+        clt->http_msg.close_after_response=1;
+        write_event(event);
     }else if (event.events & EPOLLERR){
         remove_clt(event);
     }else if(event.events & EPOLLIN){
@@ -280,7 +294,7 @@ void check_event(struct epoll_event event, int fd_passive){
     }    
 }
 
-void server(){
+void server(void){
     init_files();
     fd_epoll=epoll_create(30);
     if(fd_epoll<0){
@@ -288,6 +302,10 @@ void server(){
         return;
     }
     int fd_passive=passive_socket(IP_SERVER,SERVICE_OR_PORT,30);
+    if(fd_passive<0){
+        printf("No se puede crear el socket pasivo");
+        return;
+    }
     if(event_epoll_srv(fd_epoll,fd_passive)){
         return;
     }
@@ -301,8 +319,6 @@ void server(){
         for(int i=0; i<n_events;i++){
             check_event(maxEvents[i],fd_passive);
         }
-
-
     }
 }
 

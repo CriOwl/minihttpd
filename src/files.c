@@ -11,26 +11,13 @@
 #include <stdlib.h>
 #define OK_PATH   0
 
-struct file_metadata{
-    int fd_file;
-    size_t len_file;
-    long int offset;
-    int is_file_not_send;
-};
 
-int init_files();
-int is_hex(char value);
-int decode_path(char *path, size_t len_path, char *path_dst);
-int open_fd(char *path, size_t idx_path);
-int send_body_http(int fd_socket, struct file_metadata *fil);
-int get_len_file(struct file_metadata *fil);
-int open_fd_get_len(struct file_metadata *fil,char *path, size_t idx_path);
-int fd_dir=-1;
-int is_mode_server=0;
-struct open_how rules={0};
-const char *web_cd="./www/";
+static int fd_dir=-1;
+static int is_mode_server=0;
+static struct open_how rules={0};
+static const char *web_cd="./www/";
 
-int init_files(){
+int init_files(void){
     fd_dir=open(web_cd,__O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
     if(fd_dir<=0){
         perror("No se puede crear el fd del directorio: ");
@@ -44,12 +31,13 @@ int init_files(){
     }
 }
 
-int is_hex(char value){
+
+static int is_hex(char value){
     return (value>='0' && value<='9') || (value>='a' && value<='f') || (value>='A' && value<='F');
 }
 
 
-int decode_path(char *path, size_t len_path, char *path_dst){
+static int decode_path(char *path, size_t len_path, char *path_dst){
     int idx=0;
     for(size_t i=0; i<len_path;i++,idx++){
         if(path[i]=='%'){
@@ -74,7 +62,7 @@ int decode_path(char *path, size_t len_path, char *path_dst){
     return OK_PATH;
 }
 
-int open_fd(char *path, size_t idx_path){
+static int open_fd(char *path, size_t idx_path){
     char path_decode[idx_path+1];
     int error=decode_path(path+1,idx_path+1,path_decode);
     if(error!=0){
@@ -106,26 +94,33 @@ int open_fd(char *path, size_t idx_path){
 //--+-+-+-+-+-+-+-+-+-+-+-
 int send_body_http(int fd_socket, struct file_metadata *fil){
     while(fil->offset<fil->len_file){
-        long int n=sendfile(fd_socket,fil->fd_file,&fil->offset,fil->len_file);
-        if(n>0){
-            fil->offset=fil->offset+n;
-            continue;
-        }else if(n == EAGAIN || n== EWOULDBLOCK){
-            return  1;
-        }else{
-            return -1;
+        long int n=sendfile(fd_socket,fil->fd_file,&fil->offset,fil->len_file-fil->offset);
+        if(n<0){
+            if(n==EAGAIN && n==EWOULDBLOCK){
+                return 0;
+            }else{
+                close(fil->fd_file);
+                fil->fd_file=-1;
+                return -1;
+            }
         }
     }
+    close(fil->fd_file);
+    fil->fd_file=-1;
+    return 1;
 }   
 
-int get_len_file(struct file_metadata *fil){
+static int get_len_file(struct file_metadata *fil){
     struct stat metadata={0};
     int status= fstat(fil->fd_file,&metadata);
     if(status<0){
         perror("No se puede consultar la metadata del archivo");
+        close(fil->fd_file);
+        fil->fd_file=-1;
         return -400;
     }
     fil->len_file=metadata.st_size;
+    fil->offset=0;
     fil->is_file_not_send=0;
     if(!S_ISREG(metadata.st_mode)){
         return -404;

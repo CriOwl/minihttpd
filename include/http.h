@@ -2,8 +2,6 @@
 #define HTTP_H
 #include <stddef.h>
 #include "files.h"
-#include "server.h"
-#include <netinet/in.h>
 
 #define BUFFER_READ         40960
 #define MAX_HEADER             30
@@ -11,14 +9,6 @@
 #define MAX_BUFFER_VALUE    4096
 #define MAX_METHOD            15
 #define MAX_PATH             120
-#define HTTP_PARSE_OK             1
-#define HTTP_PARSE_MORE           0
-#define HTTP_PARSE_BAD_REQUEST   -24
-#define HTTP_PARSE_METHOD       -25
-#define HTTP_PARSE_VERSION      -26
-#define HTTP_PARSE_TOO_LARGE    -27
-#define HTTP_PARSE_TOO_MANY     -28
-#define HTTP_PARSE_HOST         -29
 
 
 struct http_header_ {
@@ -52,17 +42,7 @@ struct client{
     struct http_msg_ http_msg;
 };
 
-char get_char(struct http_msg_ *msg, size_t offset);
-int is_char_avaible_header(char value);
-int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, int end);
-int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len);
-void skip_http_request(struct http_msg_ *http_msg, size_t len);
-int parse_first_line( struct http_msg_ *msg_http, size_t line_end);
-int is_connection_close(char *value);
-int parse_headers(struct http_msg_ *http_msg, size_t idx, size_t header_len);
 void http_init(struct http_msg_ *http_msg);
 int http_write(struct http_msg_ *http_msg, char *data, size_t len_data);
-int http_parse_next(struct http_msg_ *http_msg);
-int read_send_http(struct http_msg_ *http_msg);
-int response(struct client *clt, int fd);
+int response(struct client *clt, int fd, int code_http);
 #endif
