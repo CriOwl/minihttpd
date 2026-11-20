@@ -1,16 +1,14 @@
 /*
-Modulo de parseo de una peticion HTTP 
-este modulo tomara un arreglo de bytes y separa
-los encabezados, comandos, y contenido a la vez que verifica la sintaxis http 
-y la disponibilidad de recursos para responder con los codigos de respuesta
-correspondiente a la vez que arma los encabezados*/
+Modulo para obtener el valor del encabezado Content-Type a partir
+de la extension del archivo en caso de no encontrar un archivo dentro
+de los definidos se envia como un texto plano*/
+
 #define _POSIX_C_SOURCE 200809L
 #include "include/mime.h"
 #include <stddef.h>
 #include <string.h>
 #include <strings.h>
 #include <stdio.h>
-
 
 int get_mime(char *path,size_t len,char *mime_buffer,size_t len_mime_buffer){
     size_t idx_inicio = 0;

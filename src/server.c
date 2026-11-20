@@ -2,11 +2,14 @@
 Modulo que contiene la logica del servidor a nivel de sockets
 Resolucion de dirrecion y puerto por medio de getaddrinfo
 Socket TCP de cliente y del servidor no bloqueante
-Socket Cliente con keep alive
+Uso de event-drive para concurrencia implementada con epoll
+Comprobacion de eventos en el orden write, error y event ante
+cualquier erro fatal en el inicio del servidor se termina la ejecucion
+y a su ante cualquier error fatal en el proceso de procesar una solicitud se
+cierra el socket del cliente
 */
 
 
-/* Mejorar la comunicacion de errores */
 #define _POSIX_C_SOURCE 200112L
 #include "include/server.h"
 #include "include/http.h"
@@ -20,15 +23,12 @@ Socket Cliente con keep alive
 #include <netdb.h>
 #include <string.h>
 #include <unistd.h>
-#include <netinet/tcp.h>
 #include <fcntl.h>
 #include <stdlib.h>
 static const int Q_len=10;
 static char IP_SERVER[]="0.0.0.0";
-static char SERVICE_OR_PORT[]="8080";
+static char SERVICE_OR_PORT[]="8025";
 static int fd_epoll=-1;
-
-
 
 static int passive_socket(char * ip_server, char * service_or_port, int q_len);
 static void get_addr_clt(struct sockaddr_in *clt_addr,char* ip_port);
@@ -89,12 +89,8 @@ static void get_addr_clt(struct sockaddr_in *clt_addr,char* ip_port){
         perror("Error en clt ntop : "); 
     }
 }
-
+    /*Configuracion del socket no bloqueante con fnctl que modifica el descriptor de archivo del socket*/
 static void cfg_sock_clt(int fd_clt){
-    set_sock_opt(fd_clt,SOL_SOCKET,SO_KEEPALIVE,1,"SO_KEEPALIVE",sizeof("SO_KEEPALIVE"));
-    set_sock_opt(fd_clt,IPPROTO_TCP,TCP_KEEPIDLE,20,"TCP_KEEPIDLE",sizeof("TCP_KEEPIDLE")); // Tiempo de inactividad  antes de enviar una peticion de keepalive
-    set_sock_opt(fd_clt,IPPROTO_TCP,TCP_KEEPINTVL,5,"TCP_KEEPINTVL",sizeof("TCP_KEEPINTVL")); // Cada x tiempo se envia los keepalive 
-    set_sock_opt(fd_clt,IPPROTO_TCP,TCP_KEEPCNT,4,"TCP_KEEPCNT",sizeof("TCP_KEEPCNT")); // La cantidad maxima de keepalive se envia sin tener una confirmacion
     int flags= fcntl(fd_clt,F_GETFL);
     if(flags==-1){
         perror("No se pudo obtener las flags de socket clt");
@@ -105,7 +101,7 @@ static void cfg_sock_clt(int fd_clt){
         perror("No se pudo configurar el fd como no bloqueante");
     }
 }
-
+    /*Configuracion del passive socket para reusar el puerto cuando este se encuentre en time-wait por medio de setsockopt*/
 static void cfg_sock_srv(int fd_srv){
     set_sock_opt(fd_srv,SOL_SOCKET,SO_REUSEADDR,1,"SO_REUSEADDR",sizeof("SO_REUSEADDR"));
 }
@@ -119,9 +115,7 @@ static void set_sock_opt(int fd,int level, int opt, int value, char* msg_e, int 
         perror(msg_err);
     }
 }
-
-//////////////////////////////////////////////////////
-/* Logica del servidor*/
+/*Configuracion default de los eventos a seguir con epoll del socket passivo Lectura*/
 static int event_epoll_srv(int fd_epoll, int fd_sock_passive){
     struct client *ptr = malloc(sizeof(struct client));
     if (ptr == NULL) {
@@ -139,6 +133,8 @@ static int event_epoll_srv(int fd_epoll, int fd_sock_passive){
     }
     return 0;
 }
+
+/*Configuracion default de los eventos a seguir con epoll del socket cliente Lectura Errores*/
 
 static int event_epoll_clt_init(int fd_epoll, int fd_clt){
     struct client *ptr = malloc(sizeof(struct client));
@@ -161,6 +157,9 @@ static int event_epoll_clt_init(int fd_epoll, int fd_clt){
     return 1;
 }
 
+/*Modifacacion de los eventos de siguimiento para incluir la escritura esto cuando se llena el buffer de 
+escritura del socket al enviar los datos de un archivo*/
+
 static int event_epoll_clt_write(int fd_epoll, struct epoll_event event){
     event.events=EPOLLOUT|EPOLLHUP| EPOLLERR | EPOLLRDHUP;
     struct client *clt=event.data.ptr;
@@ -170,6 +169,10 @@ static int event_epoll_clt_write(int fd_epoll, struct epoll_event event){
         return -1;
     }
 }
+
+/*Modifcacion de los eventos de siguimiento para regresar a la configuracion inicial del cliente 
+evita estar recibiendo notificaciones de escritura cuando ya no se tiene nada que responder al cliente*/
+
 static int event_epoll_clt_read(int fd_epoll, struct epoll_event event){
     event.events=EPOLLIN|EPOLLHUP| EPOLLERR | EPOLLRDHUP;
     struct client *clt=event.data.ptr;
@@ -180,6 +183,9 @@ static int event_epoll_clt_read(int fd_epoll, struct epoll_event event){
     }
 }
 
+/* Eliminacion de la estructura principal del cliente (evitar basura en la memoria) y cierre del socket
+al cerrar el socket se elimina la entrada de epoll
+*/
 static void remove_clt(struct epoll_event  event){
     struct client *clt=event.data.ptr;
     if(clt->http_msg.send_file.fd_file>0){
@@ -190,6 +196,7 @@ static void remove_clt(struct epoll_event  event){
     close(fd);
 }
 
+/* Aceptar la conexion de un cliente y la inicializacion de su estrcutura de datos y del seguimiento en epoll*/
 static int accept_event(struct epoll_event event,int fd_epoll){
     struct sockaddr_in clt_addr={0};
     struct client *clt=event.data.ptr;
@@ -205,6 +212,10 @@ static int accept_event(struct epoll_event event,int fd_epoll){
     }
     return 0;
 }
+
+/*Procedimiento de la elaboracion de la respuesta despues de la lectura de datos y cierre ordenado en caso
+de recibir un close o de un fin por parte del cliente*/
+
 static int response_request_socket(struct epoll_event event){
     struct client *clt=event.data.ptr;
     while (1){
@@ -231,6 +242,8 @@ static int response_request_socket(struct epoll_event event){
 }
 
 
+/*Continuar con el envio de los datos despues que se haya llenado el buffer y responder a las solicitudes
+pendientes*/
 static int write_event(struct epoll_event event){
     struct client *clt=event.data.ptr;
     if(clt->http_msg.send_file.offset < clt->http_msg.send_file.len_file){
@@ -248,7 +261,7 @@ static int write_event(struct epoll_event event){
     return error;
 }
 
-
+/*Lectura de los datos del socket y llamada para escribir en la estructura de datos del cliente*/
 static int read_event(struct epoll_event event){
     char buffer[4096];
     struct client *clt=event.data.ptr;
@@ -268,6 +281,7 @@ static int read_event(struct epoll_event event){
        }
        if(http_write(&clt->http_msg,buffer,n)<0){
         response(clt,clt->fd_clt,400);
+        remove_clt(event);
         return -1;
        }
     }

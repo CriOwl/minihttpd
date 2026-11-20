@@ -4,6 +4,7 @@ este modulo tomara un arreglo de bytes y separa
 los encabezados, comandos, y contenido a la vez que verifica la sintaxis http 
 y la disponibilidad de recursos para responder con los codigos de respuesta
 correspondiente a la vez que arma los encabezados*/
+
 #define _POSIX_C_SOURCE 200809L
 #include "include/http.h"
 #include "include/files.h"
@@ -24,16 +25,10 @@ correspondiente a la vez que arma los encabezados*/
 #define HTTP_PARSE_TOO_MANY     -28
 #define HTTP_PARSE_HOST         -29
 
-
-
-
-
-
-
-
 static char get_char(struct http_msg_ *msg, size_t offset){
     return msg->buffer_read[(msg->idx_begin + offset) % BUFFER_READ];
 }
+/* Comprobar que un caracter sea permitido para el encabezado o el metodo*/
 static int is_char_avaible_header(char value){
          //  A-Z                            ^ - z                           0-9          
     if ((value >= 65 && value <= 90) || (value >= 94 && value <= 122) || (value >= 48 && value <= 57)) {
@@ -45,6 +40,8 @@ static int is_char_avaible_header(char value){
     }
     return 0;
 }
+
+/*Escribir un valor en la estructura de datos a partir del buffer del mensaje recibido*/
 
 static int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int start, int end){
     if (end < start || end - start >= size_dst) {
@@ -58,6 +55,8 @@ static int copy_buffer(char *dst, int size_dst, struct http_msg_ *msg_http, int 
     return HTTP_PARSE_OK;
 }
 
+/*Comprueba que se tenga un mensaje completo de solicitud es decir /r/n/r/n*/
+
 static int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_len){
     for (size_t i = 0; i + 3 < msg_http->len_read; i++) {
         if (get_char(msg_http, i) == '\r' && get_char(msg_http, i + 1) == '\n' && get_char(msg_http, i + 2) == '\r' && get_char(msg_http, i + 3) == '\n') {
@@ -67,6 +66,7 @@ static int find_request_header_len_(struct http_msg_ *msg_http, size_t *header_l
     }
     return HTTP_PARSE_MORE;
 }
+/*Comprueba que el fin de un encabezado sea /r/n y a su vez modifica el indx del inicio del siguiente encabezado */
 
 static int find_fin_header(struct http_msg_ *msg_http, int start, size_t limit, size_t *idx_fin_header){
     for (size_t i = start; i < limit; i++) {
@@ -95,6 +95,9 @@ static void skip_http_request(struct http_msg_ *http_msg, size_t len){
     http_msg->len_read -= len;
 }
 
+/* Parseo de la primera linea y verificacion que el meotodo sea el permito (GET)
+ademas que la ruta no contenga frags ni querry
+*/
 
 static int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
     size_t i = 0;
@@ -262,6 +265,8 @@ void http_init(struct http_msg_ *http_msg){
     http_msg->idx_end = -1;
 }
 
+/* Escritura de datos recibidos del socket en el buffer del cliente
+este buffer es circular para responder peticiones secuenciales */
 int http_write(struct http_msg_ *http_msg, char *data, size_t len_data){
     if (len_data > BUFFER_READ - http_msg->len_read) {
         return HTTP_PARSE_TOO_LARGE;
@@ -300,12 +305,13 @@ static int http_parse_next(struct http_msg_ *http_msg){
     return result;
 }
 
+/* Obtencion de la fecha para el envio en el encabezado Date en la respuesta*/
 static int get_date_server(char *buffer, int len){
     time_t date=time(NULL);
     struct tm date_time={0};
     if(date==(time_t)-1){
-        return -1;
         perror("No se puede actualizar correctamente la hora");
+        return -1;
     }
     if (gmtime_r(&date, &date_time) == NULL)
         return -1;
@@ -316,6 +322,7 @@ static int get_date_server(char *buffer, int len){
     return 0;    
 }
 
+/*Comprueba que el archivo sea accesible para el servidor y que el parseo del mensaje haya sido correcto*/
 static int get_code_http(struct client *clt){
     int code_http=0;
     int status=0;
@@ -332,13 +339,13 @@ static int get_code_http(struct client *clt){
     return code_http;
 }
 
+/*Responder a la solicitud del cliente con el formato de respuesta de HTTP, no se envia el body*/
 int response(struct client *clt, int fd, int code_http){
     int status=0;
     int idx=0;
     char buffer[1024];
     if(code_http!=400){
         code_http=get_code_http(clt);
-        printf("%dasdadasd",code_http);
         if(code_http==0){
             return 0;
         }
