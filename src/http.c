@@ -166,7 +166,7 @@ static int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
 }
 
 static int is_connection_close(char *value){
-    return strstr(value,"close") || strstr(value,"CLOSE");
+    return strstr(value,"close") || strstr(value,"CLOSE") || strstr(value,"Close");
 }
 
 

@@ -25,7 +25,7 @@ Socket Cliente con keep alive
 #include <stdlib.h>
 static const int Q_len=10;
 static char IP_SERVER[]="0.0.0.0";
-static char SERVICE_OR_PORT[]="9000";
+static char SERVICE_OR_PORT[]="8080";
 static int fd_epoll=-1;
 
 
@@ -107,8 +107,7 @@ static void cfg_sock_clt(int fd_clt){
 }
 
 static void cfg_sock_srv(int fd_srv){
-    //set_sock_opt(fd_srv,SOL_SOCKET,SO_REUSEADDR,1,"SO_REUSEADDR",sizeof("SO_REUSEADDR"));
-
+    set_sock_opt(fd_srv,SOL_SOCKET,SO_REUSEADDR,1,"SO_REUSEADDR",sizeof("SO_REUSEADDR"));
 }
 
 static void set_sock_opt(int fd,int level, int opt, int value, char* msg_e, int len_msg){
@@ -158,6 +157,7 @@ static int event_epoll_clt_init(int fd_epoll, int fd_clt){
         return -1;
     }
     http_init(&ptr->http_msg);
+    ptr->http_msg.send_file.fd_file=-1;
     return 1;
 }
 
@@ -217,7 +217,6 @@ static int response_request_socket(struct epoll_event event){
                 }else if(error==0){
                     event_epoll_clt_write(fd_epoll,event);
                 }
-            break; 
         }else if(code_error ==-1){
             remove_clt(event);
             return -1;
@@ -290,7 +289,9 @@ static void check_event(struct epoll_event event, int fd_passive){
             accept_event(event,fd_epoll);
             return;
         }
-        read_event(event);
+        if(clt->http_msg.send_file.fd_file==-1){
+            read_event(event);
+        }
     }    
 }
 

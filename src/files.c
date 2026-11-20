@@ -79,7 +79,7 @@ static int open_fd(char *path, size_t idx_path){
             return -403;
         case EPERM: // El proceso no tiene permisos suficiente
             return -403;
-        case EXDEV: // El proceso no tiene permisos suficiente
+        case EXDEV:     // Intento de escapar del directorio permitido
             return -403;
         case ELOOP: // usa un enlace simbolico
             return -403;    
