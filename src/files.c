@@ -15,7 +15,8 @@
 static int fd_dir=-1;
 static int is_mode_server=0;
 static struct open_how rules={0};
-static const char *web_cd="./www/";
+static char *web_cd="./www/";
+const char default_file[]="/index.html";
 
 int init_files(void){
     fd_dir=open(web_cd,__O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);

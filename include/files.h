@@ -2,6 +2,8 @@
 #define FILE_H
 #include <stddef.h>
 
+extern const char default_file[];
+
 struct file_metadata{
     int fd_file;
     size_t len_file;

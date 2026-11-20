@@ -146,6 +146,13 @@ static int parse_first_line( struct http_msg_ *msg_http, size_t line_end){
         return result;
     }
     msg_http->f_line.idx_path = idx_path_end - idx_path_begin;
+    if (strcmp(msg_http->f_line.path, "/") == 0) {
+        int n = snprintf(msg_http->f_line.path, sizeof(msg_http->f_line.path), "%s", default_file);
+        if (n < 0 || (size_t)n >= sizeof(msg_http->f_line.path)) {
+            return HTTP_PARSE_TOO_LARGE;
+        }
+        msg_http->f_line.idx_path = n;
+    }
     i=idx_path_end;
     while (i < line_end && get_char(msg_http, i) == ' ') {
         i++;
